@@ -27,6 +27,16 @@ spring:
 server:
   port: 8080
 
+aws:
+  region: ${AWS_REGION:}
+  s3:
+    bucket: ${AWS_S3_BUCKET:on-call-schedule-agent}
+    key: ${AWS_S3_KEY:oncall_person.json}
+
+slack:
+  bot-token: ${SLACK_BOT_TOKEN:}
+  approval-callback-url: ${SLACK_APPROVAL_CALLBACK_URL:http://localhost:8080/api/approvals/response}
+
 logging:
   level:
     org.springframework.ai: INFO

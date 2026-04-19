@@ -13,13 +13,17 @@ import java.time.Instant;
 import java.util.Map;
 import java.util.UUID;
 
+import static java.util.Map.entry;
+
 @Service
 public class ApprovalService {
 
     private final ApprovalRepository approvalRepository;
+    private final SlackService slackService;
 
-    public ApprovalService(ApprovalRepository approvalRepository) {
+    public ApprovalService(ApprovalRepository approvalRepository, SlackService slackService) {
         this.approvalRepository = approvalRepository;
+        this.slackService = slackService;
     }
 
     @Transactional
@@ -41,15 +45,30 @@ public class ApprovalService {
 
         approvalRepository.save(entity);
 
-        return Map.of(
-                "approvalId", entity.getApprovalId(),
-                "approvalStatus", entity.getStatus().name(),
-                "slackUserId", slackId,
-                "message", "Slack approval request created. In production this is where you would send the Slack message.",
-                "diagnosticSummary", diagnosticSummary,
-                "recommendedAction", recommendedAction,
-                "incidentId", entity.getIncidentId(),
-                "targetSystem", targetSystem
+        boolean slackSent = slackService.sendApprovalRequest(
+                slackId,
+                entity.getApprovalId(),
+                eventDate,
+                errorMessage,
+                diagnosticSummary,
+                recommendedAction,
+                targetSystem
+        );
+
+        String slackMessage = slackSent
+                ? "Slack approval request sent to the on-call engineer."
+                : "Slack approval request stored locally but Slack delivery is not configured.";
+
+        return Map.ofEntries(
+                entry("approvalId", entity.getApprovalId()),
+                entry("approvalStatus", entity.getStatus().name()),
+                entry("slackUserId", slackId),
+                entry("slackRequestSent", slackSent),
+                entry("message", slackMessage),
+                entry("diagnosticSummary", diagnosticSummary),
+                entry("recommendedAction", recommendedAction),
+                entry("incidentId", entity.getIncidentId()),
+                entry("targetSystem", targetSystem)
         );
     }
 

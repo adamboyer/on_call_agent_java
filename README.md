@@ -133,13 +133,41 @@ Typical result:
 }
 ```
 
+## AWS and Slack integration
+
+The app can fetch the current on-call user from S3 and send a Slack approval request when restart is recommended.
+
+Environment variables:
+
+- `AWS_REGION` (optional)
+- `AWS_S3_BUCKET` (default `on-call-schedule-agent`)
+- `AWS_S3_KEY` (default `oncall_person.json`)
+- `SLACK_BOT_TOKEN`
+- `SLACK_APPROVAL_CALLBACK_URL` (default `http://localhost:8080/api/slack/actions`)
+
+Slack app setup:
+
+1. Create a Slack app with `chat:write` and `commands` scopes.
+2. Add an interactive component request URL that points to `http://localhost:8080/api/slack/actions`.
+3. Install the app to the workspace.
+
+Example `oncall_person.json` stored in S3:
+
+```json
+{
+  "name": "Alex Oncall",
+  "slackUserId": "U12345678",
+  "team": "platform"
+}
+```
+
 ## Important notes
 
-- `OnCallService` is stubbed and always returns the same user.
-- `DiagnosisService` is rule-based so you can validate the full flow locally.
+- `OnCallService` now reads the current on-call user from S3 at `s3://on-call-schedule-agent/oncall_person.json`.
+- `DiagnosisService` is still rule-based so you can validate the full flow locally.
 - `ApprovalService` persists approval state in H2 so the second request can validate the first.
 - `RestartService` is a stub. It does not call real infrastructure yet.
-- `requestRestartApproval()` stores the approval request but only returns a message saying where your future Slack integration should go.
+- `requestRestartApproval()` now attempts to send a Slack approval message when `SLACK_BOT_TOKEN` is configured.
 
 ## Good next steps
 
