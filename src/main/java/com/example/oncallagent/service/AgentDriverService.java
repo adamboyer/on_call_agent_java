@@ -38,8 +38,7 @@ public class AgentDriverService {
                     event.errorMessage(),
                     diagnostic.summary(),
                     diagnostic.recommendedAction(),
-                    diagnostic.targetSystem()
-            );
+                    diagnostic.targetSystem());
             return new AgentDecision(
                     "INCIDENT_DETECTED",
                     "COMPLETED",
@@ -47,8 +46,7 @@ public class AgentDriverService {
                     diagnostic.recommendedAction(),
                     true,
                     (String) approval.get("approvalStatus"),
-                    null
-            );
+                    null);
         }
 
         return new AgentDecision(
@@ -58,32 +56,33 @@ public class AgentDriverService {
                 diagnostic.recommendedAction(),
                 false,
                 null,
-                null
-        );
+                null);
     }
 
     private AgentDecision handleApprovalResponse(AgentEvent event) {
         ApprovalValidationResult validation = agentTools.validateApprovalResponse(
                 event.approvalId(),
                 event.slackUserId(),
-                event.response()
-        );
+                event.response());
 
         if (validation.approved() && validation.authorized()) {
             RestartResult restart = agentTools.restartService(
                     event.approvalId(),
                     event.slackUserId(),
-                    validation.targetSystem()
-            );
+                    validation.targetSystem());
+
+            String executionSummary = "FILE_COPIED_SUCCESS".equals(restart.restartStatus())
+                    ? "Restart approved and S3 copy completed for " + validation.targetSystem()
+                    : "Restart approved but S3 copy did not complete: " + restart.details();
+
             return new AgentDecision(
                     "APPROVAL_RESPONSE",
                     "COMPLETED",
-                    "Restart approved and executed for " + validation.targetSystem(),
+                    executionSummary,
                     "RESTART_SERVICE",
                     true,
                     validation.approvalStatus(),
-                    restart.restartStatus()
-            );
+                    restart.restartStatus());
         }
 
         return new AgentDecision(
@@ -93,8 +92,6 @@ public class AgentDriverService {
                 "INVESTIGATE",
                 true,
                 validation.approvalStatus(),
-                "CANCELLED"
-        );
+                "CANCELLED");
     }
 }
-

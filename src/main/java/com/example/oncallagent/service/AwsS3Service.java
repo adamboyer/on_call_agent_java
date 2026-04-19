@@ -11,12 +11,17 @@ import software.amazon.awssdk.core.ResponseInputStream;
 import software.amazon.awssdk.core.exception.SdkClientException;
 import software.amazon.awssdk.regions.Region;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.model.CopyObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectRequest;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Request;
+import software.amazon.awssdk.services.s3.model.ListObjectsV2Response;
 import software.amazon.awssdk.services.s3.model.S3Exception;
+import software.amazon.awssdk.services.s3.model.S3Object;
 
 import java.io.IOException;
 import java.time.OffsetDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 @Service
@@ -70,6 +75,46 @@ public class AwsS3Service {
         } catch (IOException | S3Exception | SdkClientException e) {
             log.error("Failed to load on-call schedule from S3 s3://{}/{}", bucket, key, e);
             throw new IllegalStateException("Unable to load on-call user from S3", e);
+        }
+    }
+
+    public List<String> listFilesInFolder(String folderPrefix) {
+        List<String> fileKeys = new ArrayList<>();
+        try {
+            ListObjectsV2Request request = ListObjectsV2Request.builder()
+                    .bucket(bucket)
+                    .prefix(folderPrefix)
+                    .build();
+
+            ListObjectsV2Response response = s3Client.listObjectsV2(request);
+            if (response.contents() != null) {
+                for (S3Object obj : response.contents()) {
+                    if (!obj.key().equals(folderPrefix) && !obj.key().endsWith("/")) {
+                        fileKeys.add(obj.key());
+                    }
+                }
+            }
+            log.info("Listed {} files in S3 prefix: {}", fileKeys.size(), folderPrefix);
+            return fileKeys;
+        } catch (S3Exception | SdkClientException e) {
+            log.error("Failed to list files in S3 folder s3://{}/{}", bucket, folderPrefix, e);
+            throw new IllegalStateException("Unable to list files from S3", e);
+        }
+    }
+
+    public void copyFileWithinBucket(String sourceKey, String destinationKey) {
+        try {
+            CopyObjectRequest copyRequest = CopyObjectRequest.builder()
+                    .copySource(bucket + "/" + sourceKey)
+                    .bucket(bucket)
+                    .key(destinationKey)
+                    .build();
+
+            s3Client.copyObject(copyRequest);
+            log.info("Copied file from s3://{}/{} to s3://{}/{}", bucket, sourceKey, bucket, destinationKey);
+        } catch (S3Exception | SdkClientException e) {
+            log.error("Failed to copy file within S3 bucket", e);
+            throw new IllegalStateException("Unable to copy file in S3", e);
         }
     }
 }
