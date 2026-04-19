@@ -1,8 +1,9 @@
 package com.example.oncallagent.model;
 
 public record RestartResult(
-        String restartStatus,
+        String status,
         String targetSystem,
-        String details
+        String message,
+        boolean success
 ) {
 }
