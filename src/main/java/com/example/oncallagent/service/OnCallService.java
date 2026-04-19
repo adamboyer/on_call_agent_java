@@ -24,6 +24,8 @@ public class OnCallService {
             return new OnCallUser(
                     "Alex Oncall",
                     "U12345678",
+                    null,
+                    null,
                     "platform"
             );
         }

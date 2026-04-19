@@ -2,6 +2,7 @@ package com.example.oncallagent.service;
 
 import com.example.oncallagent.model.OnCallUser;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.type.CollectionType;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -15,6 +16,8 @@ import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
 import java.io.IOException;
+import java.time.OffsetDateTime;
+import java.util.List;
 
 @Service
 public class AwsS3Service {
@@ -50,9 +53,22 @@ public class AwsS3Service {
                         .bucket(bucket)
                         .key(key)
                         .build())) {
-            return objectMapper.readValue(response, OnCallUser.class);
+
+            CollectionType listType = objectMapper.getTypeFactory()
+                    .constructCollectionType(List.class, OnCallUser.class);
+            List<OnCallUser> schedule = objectMapper.readValue(response, listType);
+
+            OffsetDateTime now = OffsetDateTime.now();
+            return schedule.stream()
+                    .filter(u -> u.startDate() != null && u.endDate() != null
+                            && !now.isBefore(u.startDate())
+                            && !now.isAfter(u.endDate()))
+                    .findFirst()
+                    .orElseThrow(() -> new IllegalStateException(
+                            "No on-call user found for current date: " + now));
+
         } catch (IOException | S3Exception | SdkClientException e) {
-            log.error("Failed to load on-call user from S3 s3://{}/{}", bucket, key, e);
+            log.error("Failed to load on-call schedule from S3 s3://{}/{}", bucket, key, e);
             throw new IllegalStateException("Unable to load on-call user from S3", e);
         }
     }

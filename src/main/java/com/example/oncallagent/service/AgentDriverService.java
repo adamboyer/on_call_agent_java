@@ -2,68 +2,99 @@ package com.example.oncallagent.service;
 
 import com.example.oncallagent.model.AgentDecision;
 import com.example.oncallagent.model.AgentEvent;
+import com.example.oncallagent.model.ApprovalValidationResult;
+import com.example.oncallagent.model.DiagnosticResult;
+import com.example.oncallagent.model.OnCallUser;
+import com.example.oncallagent.model.RestartResult;
 import com.example.oncallagent.tool.AgentTools;
-import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
+
+import java.util.Map;
 
 @Service
 public class AgentDriverService {
 
-    private static final String SYSTEM_PROMPT = """
-            You are an on-call operations agent.
-            
-            You handle exactly two event types:
-            1. INCIDENT_DETECTED
-            2. APPROVAL_RESPONSE
-            
-            For INCIDENT_DETECTED:
-            - First call runDiagnostic with the eventDate and errorMessage.
-            - Then call getCurrentOncall.
-            - If the diagnostic recommends RESTART_SERVICE, call requestRestartApproval.
-            - Do not call restartService during INCIDENT_DETECTED.
-            - Return a final JSON object matching the AgentDecision schema.
-            
-            For APPROVAL_RESPONSE:
-            - First call validateApprovalResponse.
-            - Only if the approval is both approved and authorized should you call restartService.
-            - Return a final JSON object matching the AgentDecision schema.
-            
-            Always use tools when tool data is needed. Never invent IDs, approval status, target systems, or restart results.
-            Keep the final summary concise and operational.
-            """;
-
-    private final ChatClient chatClient;
     private final AgentTools agentTools;
 
-    public AgentDriverService(ChatClient chatClient, AgentTools agentTools) {
-        this.chatClient = chatClient;
+    public AgentDriverService(AgentTools agentTools) {
         this.agentTools = agentTools;
     }
 
     public AgentDecision handle(AgentEvent event) {
-        return chatClient.prompt()
-                .system(SYSTEM_PROMPT)
-                .user(buildUserPrompt(event))
-                .tools(agentTools)
-                .call()
-                .entity(AgentDecision.class);
-    }
-
-    private String buildUserPrompt(AgentEvent event) {
         return switch (event.eventType()) {
-            case INCIDENT_DETECTED -> """
-                    Handle this incident event.
-                    eventType: %s
-                    eventDate: %s
-                    errorMessage: %s
-                    """.formatted(event.eventType(), event.eventDate(), event.errorMessage());
-            case APPROVAL_RESPONSE -> """
-                    Handle this approval response event.
-                    eventType: %s
-                    approvalId: %s
-                    slackUserId: %s
-                    response: %s
-                    """.formatted(event.eventType(), event.approvalId(), event.slackUserId(), event.response());
+            case INCIDENT_DETECTED -> handleIncident(event);
+            case APPROVAL_RESPONSE -> handleApprovalResponse(event);
         };
     }
+
+    private AgentDecision handleIncident(AgentEvent event) {
+        DiagnosticResult diagnostic = agentTools.runDiagnostic(event.eventDate(), event.errorMessage());
+        OnCallUser onCallUser = agentTools.getCurrentOncall();
+
+        if ("RESTART_SERVICE".equals(diagnostic.recommendedAction())) {
+            Map<String, Object> approval = agentTools.requestRestartApproval(
+                    onCallUser.slackUserId(),
+                    event.eventDate(),
+                    event.errorMessage(),
+                    diagnostic.summary(),
+                    diagnostic.recommendedAction(),
+                    diagnostic.targetSystem()
+            );
+            return new AgentDecision(
+                    "INCIDENT_DETECTED",
+                    "COMPLETED",
+                    diagnostic.summary(),
+                    diagnostic.recommendedAction(),
+                    true,
+                    (String) approval.get("approvalStatus"),
+                    null
+            );
+        }
+
+        return new AgentDecision(
+                "INCIDENT_DETECTED",
+                "COMPLETED",
+                diagnostic.summary(),
+                diagnostic.recommendedAction(),
+                false,
+                null,
+                null
+        );
+    }
+
+    private AgentDecision handleApprovalResponse(AgentEvent event) {
+        ApprovalValidationResult validation = agentTools.validateApprovalResponse(
+                event.approvalId(),
+                event.slackUserId(),
+                event.response()
+        );
+
+        if (validation.approved() && validation.authorized()) {
+            RestartResult restart = agentTools.restartService(
+                    event.approvalId(),
+                    event.slackUserId(),
+                    validation.targetSystem()
+            );
+            return new AgentDecision(
+                    "APPROVAL_RESPONSE",
+                    "COMPLETED",
+                    "Restart approved and executed for " + validation.targetSystem(),
+                    "RESTART_SERVICE",
+                    true,
+                    validation.approvalStatus(),
+                    restart.restartStatus()
+            );
+        }
+
+        return new AgentDecision(
+                "APPROVAL_RESPONSE",
+                "COMPLETED",
+                "Restart denied or unauthorized: " + validation.reason(),
+                "INVESTIGATE",
+                true,
+                validation.approvalStatus(),
+                "CANCELLED"
+        );
+    }
 }
+

@@ -48,6 +48,8 @@ public class SlackInteractionController {
             String responseUrl = root.path("response_url").asText();
             String channelId = root.path("channel").path("id").asText(null);
 
+            log.info("[SLACK] action received: actionValue='{}', slackUserId='{}'", actionValue, slackUserId);
+
             if (actionValue == null || actionValue.isBlank()) {
                 return ResponseEntity.badRequest().body(Map.of("text", "Missing Slack action value."));
             }

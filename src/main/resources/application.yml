@@ -22,7 +22,6 @@ spring:
         options:
           model: ${OLLAMA_MODEL:llama3.1:8b}
           temperature: 0.1
-          format: json
 
 server:
   port: 8080
@@ -40,4 +39,4 @@ slack:
 logging:
   level:
     org.springframework.ai: INFO
-    com.example.oncallagent: INFO
+    com.example.oncallagent: DEBUG

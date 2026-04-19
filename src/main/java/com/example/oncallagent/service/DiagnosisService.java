@@ -12,7 +12,9 @@ public class DiagnosisService {
         String normalized = errorMessage.toLowerCase(Locale.ROOT);
 
         if (normalized.contains("500") || normalized.contains("timeout") || normalized.contains("stuck")
-                || normalized.contains("unhealthy") || normalized.contains("restart")) {
+                || normalized.contains("unhealthy") || normalized.contains("restart")
+                || normalized.contains("outofmemory") || normalized.contains("out of memory")
+                || normalized.contains("oom") || normalized.contains("memory")) {
             return new DiagnosticResult(
                     "The service appears unhealthy and matches a restartable failure pattern detected at %s."
                             .formatted(eventDate),
