@@ -37,17 +37,18 @@ public class AwsS3Service {
     public AwsS3Service(
             @Value("${aws.s3.bucket:on-call-schedule-agent}") String bucket,
             @Value("${aws.s3.key:oncall_person.json}") String key,
-            @Value("${aws.region:}") String awsRegion,
+            @Value("${aws.region}") String awsRegion,
             ObjectMapper objectMapper) {
-        this.bucket = bucket;
-        this.key = key;
+        this.bucket = bucket.trim();
+        this.key = key.trim();
         this.objectMapper = objectMapper;
+        log.info("Initializing AwsS3Service with bucket={}, key={}, region={}", bucket, key, awsRegion);
 
         if (awsRegion == null || awsRegion.isBlank()) {
             this.s3Client = S3Client.create();
         } else {
             this.s3Client = S3Client.builder()
-                    .region(Region.of(awsRegion))
+                    .region(Region.of(awsRegion.trim()))
                     .build();
         }
     }

@@ -88,7 +88,7 @@ public class SlackService {
 
             String body = objectMapper.writeValueAsString(payload);
             HttpRequest request = HttpRequest.newBuilder(POST_MESSAGE_URI)
-                    .header("Authorization", "Bearer " + botToken)
+                    .header("Authorization", "Bearer " + botToken.trim())
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(body))
                     .build();
