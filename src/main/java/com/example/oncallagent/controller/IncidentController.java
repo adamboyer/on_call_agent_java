@@ -20,20 +20,20 @@ public class IncidentController {
 
     @PostMapping
     public ResponseEntity<Map<String, Object>> handleIncident(@RequestBody AgentEvent request) {
-    AgentEvent event = new AgentEvent(
-            AgentEventType.INCIDENT_DETECTED,
-            request.eventDate(),
-            request.errorMessage(),
-            null,
-            null,
-            null
-    );
+        AgentEvent event = new AgentEvent(
+                AgentEventType.INCIDENT_DETECTED,
+                request.eventDate(),
+                request.errorMessage(),
+                null,
+                null,
+                null
+        );
 
-    agentWorkflowService.processEventAsync(event);
+        agentWorkflowService.processEventAsync(event);
 
-    return ResponseEntity.accepted().body(Map.of(
-            "status", "accepted",
-            "message", "Incident received and processing started"
-    ));
-}
+        return ResponseEntity.accepted().body(Map.of(
+                "status", "accepted",
+                "message", "Incident received and processing started"
+        ));
+    }
 }
