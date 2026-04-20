@@ -2,7 +2,8 @@ package com.example.oncallagent.service;
 
 import com.example.oncallagent.model.AgentDecision;
 import com.example.oncallagent.model.AgentEvent;
-import com.example.oncallagent.tool.AgentTools;
+import com.example.oncallagent.tool.ApprovalTools;
+import com.example.oncallagent.tool.IncidentTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
@@ -13,72 +14,185 @@ public class AgentDriverService {
 
     private static final Logger log = LoggerFactory.getLogger(AgentDriverService.class);
 
-    private static final String SYSTEM_PROMPT = """
-            You are an on-call operations agent.
+private static final String INCIDENT_SYSTEM_PROMPT = """
+        You are an on-call operations agent handling an INCIDENT_DETECTED event.
 
-            You handle exactly two event types:
-            1. INCIDENT_DETECTED
-            2. APPROVAL_RESPONSE
+        General rules:
+        - Always use tools when tool data is needed.
+        - Never invent IDs, approval status, target systems, Slack user IDs, repository names, branches, file paths, or analysis results.
+        - Never call a tool with null, empty, or missing values.
+        - slackId for approval tools must come only from getCurrentOncall.slackUserId.
+        - channelId for channel messages must be C0ATPJU695G.
+        - If recommendedAction == RESTART_SERVICE, approvalRequired must be true.
+        - Return valid JSON only.
+        - The final response must match exactly this JSON shape:
+          {
+            "eventType": "INCIDENT_DETECTED",
+            "status": "pending | completed | error",
+            "summary": "string",
+            "recommendedAction": "RESTART_SERVICE | ANALYZE_CODE | INVESTIGATE",
+            "approvalRequired": true,
+            "approvalStatus": "PENDING | NOT_REQUIRED | UNKNOWN | ERROR",
+            "restartStatus": "NOT_EXECUTED"
+          }
+
+        STRICT TOOL USAGE RULE:
+        - If a tool requires structured input, you must build the full object first.
+        - Do not call tools with partial or missing data.
+        - Do not retry a failed tool call with the same invalid inputs.
+        - Always gather required data from prior tool calls before calling dependent tools.
+
+        IMPORTANT:
+        - You are not allowed to return status = pending unless you have already called an approval-request tool successfully.
+        - For RESTART_SERVICE, you must request approval before returning.
+        - For CREATE_PULL_REQUEST, you must request approval before returning.
+
+        Incident flow rules:
+        1. Call runDiagnostic first.
+
+        2. If runDiagnostic.recommendedAction == RESTART_SERVICE:
+
+        - You MUST call getCurrentOncall.
+
+        - You MUST build a RestartApprovalRequest object with:
+            - slackId = getCurrentOncall.slackUserId
+            - eventDate = the incident event eventDate
+            - errorMessage = the incident event errorMessage
+            - diagnosticSummary = runDiagnostic.summary
+            - recommendedAction = runDiagnostic.recommendedAction
+            - targetSystem = runDiagnostic.targetSystem
+
+        - All fields must be non-null and non-empty.
+        - If any field is missing, DO NOT continue. You must fix missing data first.
+
+        - You MUST call requestRestartApproval with that object.
+
+        - It is INVALID to return a final response before calling requestRestartApproval.
+
+        - Only AFTER requestRestartApproval succeeds:
+            - return status = pending
+            - return approvalRequired = true
+            - return approvalStatus = PENDING
+
+        - Then STOP immediately.
+        - Do not call any other tools.
+
+        3. If runDiagnostic.recommendedAction == ANALYZE_CODE:
+           - call getRepositoryContext
+           - call fetchCodeContext
+           - call analyzeCodeIssue
+
+           - if analyzeCodeIssue.confidentFixAvailable == true:
+             - call getCurrentOncall
+             - you MUST build a PullRequestApprovalRequest object with:
+               - slackId = getCurrentOncall.slackUserId
+               - eventDate = the incident event eventDate
+               - errorMessage = the incident event errorMessage
+               - diagnosticSummary = analyzeCodeIssue.summary
+               - recommendedAction = CREATE_PULL_REQUEST
+               - targetSystem = runDiagnostic.targetSystem
+               - repoName = analyzeCodeIssue.repoName
+             - all fields must be non-null and non-empty
+             - you MUST call requestPullRequestApproval with that object
+             - only AFTER requestPullRequestApproval succeeds may you return:
+               - status = pending
+               - approvalStatus = PENDING
+             - then STOP immediately and return the final JSON
+
+           - if analyzeCodeIssue.confidentFixAvailable == false:
+             - call sendSlackChannelMessage with channelId = C0ATPJU695G
+             - after sendSlackChannelMessage, return:
+               - status = completed
+               - approvalStatus = NOT_REQUIRED
+             - then STOP immediately and return the final JSON
+
+        4. If runDiagnostic.recommendedAction == INVESTIGATE:
+           - return:
+             - status = completed
+             - approvalStatus = NOT_REQUIRED
+           - STOP immediately and return the final JSON
+
+        5. Never perform more than one terminal incident action.
+        """;
+
+    private static final String APPROVAL_SYSTEM_PROMPT = """
+            You are an on-call operations agent handling an APPROVAL_RESPONSE event.
 
             General rules:
             - Always use tools when tool data is needed.
-            - Never invent IDs, approval status, target systems, Slack user IDs, or restart results.
+            - Never invent IDs, approval status, target systems, repository names, branches, or execution results.
             - Never call a tool with null, empty, or missing values.
-            - If a required value is missing, stop and return a final AgentDecision explaining what is missing.
-            - Keep the final summary concise and operational.
-            - Return a final JSON object matching the AgentDecision schema.
+            - Return valid JSON only.
+            - The final response must match exactly this JSON shape:
+              {
+                "eventType": "APPROVAL_RESPONSE",
+                "status": "completed | error",
+                "summary": "string",
+                "recommendedAction": "RESTART_SERVICE | CREATE_PULL_REQUEST | INVESTIGATE",
+                "approvalRequired": false,
+                "approvalStatus": "APPROVED | DENIED | USED | EXPIRED | NOT_FOUND | UNKNOWN",
+                "restartStatus": "RESTART_TRIGGERED | RESTART_FAILED | PULL_REQUEST_CREATED | NOT_EXECUTED"
+              }
 
-            For INCIDENT_DETECTED:
-            1. First call runDiagnostic with eventDate and errorMessage.
-            2. Then call getCurrentOncall.
-            3. You MUST reuse the outputs from prior tools:
-               - Use slackUserId from getCurrentOncall
-               - Use summary from runDiagnostic as diagnosticSummary
-               - Use recommendedAction from runDiagnostic
-               - Use targetSystem from runDiagnostic
-            4. Only if runDiagnostic.recommendedAction == RESTART_SERVICE, call requestRestartApproval with:
-               - slackId = getCurrentOncall.slackUserId
-               - eventDate = the event input
-               - errorMessage = the event input
-               - diagnosticSummary = runDiagnostic.summary
-               - recommendedAction = runDiagnostic.recommendedAction
-               - targetSystem = runDiagnostic.targetSystem
-            5. Do not call requestRestartApproval if any of those values are missing.
-            6. Do not call restartService during INCIDENT_DETECTED.
-
-            For APPROVAL_RESPONSE:
-            1. First call validateApprovalResponse with:
-               - approvalId = the event input
-               - slackUserId = the event input
-               - response = the event input
-            2. Only if validation says approved=true and authorized=true, call restartService with:
-               - approvalId = validateApprovalResponse.approvalId if available, otherwise the event approvalId
-               - slackUserId = the event input
-               - targetSystem = validateApprovalResponse.targetSystem
-            3. Do not call restartService if targetSystem is missing.
+            Approval flow rules:
+            1. Call validateApprovalResponse first.
+            2. If approval is not approved and authorized, STOP and return final JSON.
+            3. If action == RESTART_SERVICE:
+               - call restartService
+               - AFTER restartService, STOP immediately and return final JSON.
+            4. If action == CREATE_PULL_REQUEST:
+               - call getRepositoryContext
+               - call createPullRequest
+               - AFTER createPullRequest, STOP immediately and return final JSON.
+            5. Never perform more than one executable action.
             """;
 
     private final ChatClient chatClient;
-    private final AgentTools agentTools;
+    private final IncidentTools incidentTools;
+    private final ApprovalTools approvalTools;
 
-    public AgentDriverService(ChatClient chatClient, AgentTools agentTools) {
+    public AgentDriverService(ChatClient chatClient,
+                              IncidentTools incidentTools,
+                              ApprovalTools approvalTools) {
         this.chatClient = chatClient;
-        this.agentTools = agentTools;
+        this.incidentTools = incidentTools;
+        this.approvalTools = approvalTools;
     }
 
     public AgentDecision handle(AgentEvent event) {
+        if (event == null || event.eventType() == null) {
+            log.error("AgentDriverService.handle received null event or null eventType. event={}", event);
+            return new AgentDecision(
+                    "UNKNOWN",
+                    "error",
+                    "Missing eventType",
+                    "INVESTIGATE",
+                    false,
+                    "UNKNOWN",
+                    "NOT_EXECUTED"
+            );
+        }
+
         log.info("AgentDriverService.handle invoked. eventType={}", event.eventType());
 
         String userPrompt = buildUserPrompt(event);
         log.debug("User prompt built:\n{}", userPrompt);
 
         try {
-            log.info("Calling LLM for eventType={}", event.eventType());
+            Object tools = switch (event.eventType()) {
+                case INCIDENT_DETECTED -> incidentTools;
+                case APPROVAL_RESPONSE -> approvalTools;
+            };
+
+            String systemPrompt = switch (event.eventType()) {
+                case INCIDENT_DETECTED -> INCIDENT_SYSTEM_PROMPT;
+                case APPROVAL_RESPONSE -> APPROVAL_SYSTEM_PROMPT;
+            };
 
             AgentDecision decision = chatClient.prompt()
-                    .system(SYSTEM_PROMPT)
+                    .system(systemPrompt)
                     .user(userPrompt)
-                    .tools(agentTools)
+                    .tools(tools)
                     .call()
                     .entity(AgentDecision.class);
 
@@ -90,7 +204,6 @@ public class AgentDriverService {
                     decision.restartStatus());
 
             log.debug("Full AgentDecision response={}", decision);
-
             return decision;
 
         } catch (Exception ex) {
@@ -109,25 +222,27 @@ public class AgentDriverService {
     }
 
     private String buildUserPrompt(AgentEvent event) {
-        String prompt = switch (event.eventType()) {
+        return switch (event.eventType()) {
             case INCIDENT_DETECTED -> """
-                    Handle this incident event.
+                Handle this incident event.
 
-                    eventType: %s
-                    eventDate: %s
-                    errorMessage: %s
+                eventType: %s
+                eventDate: %s
+                errorMessage: %s
 
-                    Required behavior:
-                    - Call runDiagnostic first.
-                    - Call getCurrentOncall second.
-                    - If recommendedAction is RESTART_SERVICE, call requestRestartApproval using the exact values returned by those tools.
-                    - Never pass null values to requestRestartApproval.
-                    - Then return the final AgentDecision JSON.
-                    """.formatted(
-                    event.eventType(),
-                    event.eventDate(),
-                    event.errorMessage()
-            );
+                Required behavior:
+                - You must call runDiagnostic first.
+                - If the result is RESTART_SERVICE:
+                - you must call getCurrentOncall
+                - you must call requestRestartApproval
+                - you are not allowed to return until requestRestartApproval has been called
+                - Do not return completed for restart flows.
+                - Stop after the first valid terminal action.
+            """.formatted(
+                event.eventType(),
+                event.eventDate(),
+                event.errorMessage()
+);
 
             case APPROVAL_RESPONSE -> """
                     Handle this approval response event.
@@ -137,12 +252,10 @@ public class AgentDriverService {
                     slackUserId: %s
                     response: %s
 
-                    Required behavior:
-                    - Call validateApprovalResponse first.
-                    - Only if approved=true and authorized=true, call restartService.
-                    - Use targetSystem from validateApprovalResponse.
-                    - Never pass null values to restartService.
-                    - Then return the final AgentDecision JSON.
+                    Important:
+                    - Validate approval first.
+                    - Perform at most one executable action.
+                    - Stop immediately after that action.
                     """.formatted(
                     event.eventType(),
                     event.approvalId(),
@@ -150,8 +263,5 @@ public class AgentDriverService {
                     event.response()
             );
         };
-
-        log.debug("Generated prompt for eventType={}", event.eventType());
-        return prompt;
     }
 }

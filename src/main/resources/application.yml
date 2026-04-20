@@ -1,4 +1,7 @@
 spring:
+  profiles:
+    active:
+    - local
   datasource:
     url: jdbc:h2:mem:oncalldb;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE
     driver-class-name: org.h2.Driver
@@ -15,14 +18,20 @@ spring:
     open-in-view: false
   ai:
     model:
-      chat: ollama
-    ollama:
-      base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+      chat: openai
+    openai:
+      api-key: ${OPENAI_API_KEY}
       chat:
         options:
-          model: ${OLLAMA_MODEL:llama3.2}
+          model: gpt-5.4
           temperature: 0.1
-          format: json
+    # ollama:
+    #   base-url: ${OLLAMA_BASE_URL:http://localhost:11434}
+    #   chat:
+    #     options:
+    #       model: ${OLLAMA_MODEL:llama3.2}
+    #       temperature: 0.1
+    #       format: json
 
 server:
   port: 8080

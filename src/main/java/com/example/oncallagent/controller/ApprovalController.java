@@ -1,10 +1,13 @@
 package com.example.oncallagent.controller;
 
-import com.example.oncallagent.model.AgentDecision;
 import com.example.oncallagent.model.AgentEvent;
-import com.example.oncallagent.model.ApprovalResponseRequest;
-import com.example.oncallagent.service.AgentDriverService;
-import jakarta.validation.Valid;
+import com.example.oncallagent.model.AgentEventType;
+import com.example.oncallagent.service.AgentWorkflowService;
+
+
+import java.util.Map;
+
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -14,18 +17,28 @@ import org.springframework.web.bind.annotation.RestController;
 @RequestMapping("/api/approvals")
 public class ApprovalController {
 
-    private final AgentDriverService agentDriverService;
+private final AgentWorkflowService agentWorkflowService;
 
-    public ApprovalController(AgentDriverService agentDriverService) {
-        this.agentDriverService = agentDriverService;
+    public ApprovalController(AgentWorkflowService agentWorkflowService) {
+        this.agentWorkflowService = agentWorkflowService;
     }
 
-    @PostMapping("/response")
-    public AgentDecision handleApprovalResponse(@Valid @RequestBody ApprovalResponseRequest request) {
-        return agentDriverService.handle(AgentEvent.approvalResponse(
-                request.approvalId(),
-                request.slackUserId(),
-                request.response()
-        ));
-    }
+   @PostMapping("/response")
+public ResponseEntity<Map<String, Object>> handleApprovalResponse(@RequestBody AgentEvent request) {
+    AgentEvent event = new AgentEvent(
+            AgentEventType.APPROVAL_RESPONSE,
+            null,
+            null,
+            request.approvalId(),
+            request.slackUserId(),
+            request.response()
+    );
+
+    agentWorkflowService.processEventAsync(event);
+
+    return ResponseEntity.accepted().body(Map.of(
+            "status", "accepted",
+            "message", "Approval response received and processing started"
+    ));
+}
 }

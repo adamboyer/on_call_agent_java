@@ -1,27 +1,39 @@
 package com.example.oncallagent.controller;
 
-import com.example.oncallagent.model.AgentDecision;
 import com.example.oncallagent.model.AgentEvent;
-import com.example.oncallagent.model.IncidentRequest;
-import com.example.oncallagent.service.AgentDriverService;
-import jakarta.validation.Valid;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RestController;
+import com.example.oncallagent.model.AgentEventType;
+import com.example.oncallagent.service.AgentWorkflowService;
+import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/incidents")
 public class IncidentController {
 
-    private final AgentDriverService agentDriverService;
+    private final AgentWorkflowService agentWorkflowService;
 
-    public IncidentController(AgentDriverService agentDriverService) {
-        this.agentDriverService = agentDriverService;
+    public IncidentController(AgentWorkflowService agentWorkflowService) {
+        this.agentWorkflowService = agentWorkflowService;
     }
 
     @PostMapping
-    public AgentDecision handleIncident(@Valid @RequestBody IncidentRequest request) {
-        return agentDriverService.handle(AgentEvent.incident(request.eventDate(), request.errorMessage()));
-    }
+    public ResponseEntity<Map<String, Object>> handleIncident(@RequestBody AgentEvent request) {
+    AgentEvent event = new AgentEvent(
+            AgentEventType.INCIDENT_DETECTED,
+            request.eventDate(),
+            request.errorMessage(),
+            null,
+            null,
+            null
+    );
+
+    agentWorkflowService.processEventAsync(event);
+
+    return ResponseEntity.accepted().body(Map.of(
+            "status", "accepted",
+            "message", "Incident received and processing started"
+    ));
+}
 }
