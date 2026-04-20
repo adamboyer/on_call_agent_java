@@ -207,6 +207,104 @@ public class SlackApiService implements SlackService {
         return sendChannelMessage(channel, text).ok();
     }
 
+    @Override
+    public boolean sendPullRequestApprovalRequest(String slackUserId,
+                                                  String approvalId,
+                                                  String eventDate,
+                                                  String errorMessage,
+                                                  String diagnosticSummary,
+                                                  String recommendedAction,
+                                                  String targetSystem,
+                                                  String repoName,
+                                                  String targetFile) {
+        if (botToken == null || botToken.isBlank()) {
+            log.warn("Slack bot token is not configured. PR approval request will not be delivered to Slack.");
+            return false;
+        }
+
+        try {
+            Map<String, Object> payload = Map.of(
+                    "channel", slackUserId,
+                    "text", "Approval requested for automated pull request",
+                    "blocks", List.of(
+                            Map.of(
+                                    "type", "section",
+                                    "text", Map.of(
+                                            "type", "mrkdwn",
+                                            "text", "*Pull request approval requested for your on-call incident*"
+                                    )
+                            ),
+                            Map.of(
+                                    "type", "section",
+                                    "fields", List.of(
+                                            Map.of("type", "mrkdwn", "text", "*Event Date:*\n" + eventDate),
+                                            Map.of("type", "mrkdwn", "text", "*Target System:*\n" + targetSystem),
+                                            Map.of("type", "mrkdwn", "text", "*Repository:*\n" + repoName),
+                                            Map.of("type", "mrkdwn", "text", "*File:*\n" + targetFile),
+                                            Map.of("type", "mrkdwn", "text", "*Recommendation:*\n" + recommendedAction),
+                                            Map.of("type", "mrkdwn", "text", "*Summary:*\n" + diagnosticSummary)
+                                    )
+                            ),
+                            Map.of(
+                                    "type", "section",
+                                    "text", Map.of(
+                                            "type", "mrkdwn",
+                                            "text", "*Error:*\n" + errorMessage
+                                    )
+                            ),
+                            Map.of(
+                                    "type", "actions",
+                                    "elements", List.of(
+                                            Map.of(
+                                                    "type", "button",
+                                                    "text", Map.of("type", "plain_text", "text", "Approve PR"),
+                                                    "style", "primary",
+                                                    "value", "APPROVE_PR|" + approvalId,
+                                                    "action_id", "approve_pr"
+                                            ),
+                                            Map.of(
+                                                    "type", "button",
+                                                    "text", Map.of("type", "plain_text", "text", "Deny PR"),
+                                                    "style", "danger",
+                                                    "value", "DENY_PR|" + approvalId,
+                                                    "action_id", "deny_pr"
+                                            )
+                                    )
+                            )
+                    )
+            );
+
+            HttpRequest request = HttpRequest.newBuilder(POST_MESSAGE_URI)
+                    .header("Authorization", "Bearer " + botToken.trim())
+                    .header("Content-Type", "application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString(objectMapper.writeValueAsString(payload)))
+                    .build();
+
+            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
+            if (response.statusCode() != 200) {
+                log.warn("Slack PR approval request returned non-200 status: {}", response.statusCode());
+                return false;
+            }
+
+            SlackResponse slackResponse = objectMapper.readValue(response.body(), SlackResponse.class);
+            if (!slackResponse.ok()) {
+                log.warn("Slack PR approval request rejected: {}", slackResponse.error());
+                return false;
+            }
+
+            log.info("Slack PR approval request sent. slackUserId={}, approvalId={}, ts={}",
+                    slackUserId, approvalId, slackResponse.ts());
+            return true;
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            log.error("Failed to send Slack PR approval request", ex);
+            return false;
+        } catch (IOException ex) {
+            log.error("Failed to send Slack PR approval request", ex);
+            return false;
+        }
+    }
+
     private record SlackResponse(boolean ok, String error, String ts) {
     }
 }

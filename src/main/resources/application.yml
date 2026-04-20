@@ -36,6 +36,16 @@ spring:
 server:
   port: 8080
 
+code:
+  repo:
+    default-target-system: api_with_error
+    default-repo-name: adamboyer/api_with_error
+    default-base-branch: master
+
+github:
+  token: ${GITHUB_TOKEN:}
+  api-base-url: ${GITHUB_API_BASE_URL:https://api.github.com}
+
 logging:
   level:
     org.springframework.ai: INFO

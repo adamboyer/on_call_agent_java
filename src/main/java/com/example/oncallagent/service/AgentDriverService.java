@@ -2,8 +2,15 @@ package com.example.oncallagent.service;
 
 import com.example.oncallagent.model.AgentDecision;
 import com.example.oncallagent.model.AgentEvent;
+import com.example.oncallagent.model.ApprovalValidationResult;
+import com.example.oncallagent.model.CodeAnalysisResult;
+import com.example.oncallagent.model.CodeContextResult;
 import com.example.oncallagent.model.DiagnosticResult;
 import com.example.oncallagent.model.OnCallUser;
+import com.example.oncallagent.model.PullRequestApprovalRequest;
+import com.example.oncallagent.model.PullRequestPlan;
+import com.example.oncallagent.model.PullRequestResult;
+import com.example.oncallagent.model.RepositoryContext;
 import com.example.oncallagent.model.RestartApprovalRequest;
 import com.example.oncallagent.tool.ApprovalTools;
 import com.example.oncallagent.tool.IncidentTools;
@@ -156,13 +163,22 @@ private static final String INCIDENT_SYSTEM_PROMPT = """
     private final ChatClient chatClient;
     private final IncidentTools incidentTools;
     private final ApprovalTools approvalTools;
+    private final ApprovalService approvalService;
+    private final RepositoryContextService repositoryContextService;
+    private final GitHubService gitHubService;
 
     public AgentDriverService(ChatClient chatClient,
                               IncidentTools incidentTools,
-                              ApprovalTools approvalTools) {
+                              ApprovalTools approvalTools,
+                              ApprovalService approvalService,
+                              RepositoryContextService repositoryContextService,
+                              GitHubService gitHubService) {
         this.chatClient = chatClient;
         this.incidentTools = incidentTools;
         this.approvalTools = approvalTools;
+        this.approvalService = approvalService;
+        this.repositoryContextService = repositoryContextService;
+        this.gitHubService = gitHubService;
     }
 
     public AgentDecision handle(AgentEvent event) {
@@ -180,6 +196,13 @@ private static final String INCIDENT_SYSTEM_PROMPT = """
         }
 
         log.info("AgentDriverService.handle invoked. eventType={}", event.eventType());
+
+        if (event.eventType().name().equals("APPROVAL_RESPONSE")
+                && event.response() != null
+                && "APPROVE_PR".equalsIgnoreCase(event.response())) {
+            log.info("Handling approved pull request flow directly in code. approvalId={}", event.approvalId());
+            return executeApprovedPullRequestFlow(event);
+        }
 
         String userPrompt = buildUserPrompt(event);
         log.debug("User prompt built:\n{}", userPrompt);
@@ -230,19 +253,22 @@ private static final String INCIDENT_SYSTEM_PROMPT = """
     }
 
     private AgentDecision enforceRequiredWorkflow(AgentEvent event, AgentDecision decision) {
-        if (event.eventType() != null
-                && event.eventType().name().equals("INCIDENT_DETECTED")
-                && decision != null
-                && "RESTART_SERVICE".equals(decision.recommendedAction())
-                && !"PENDING".equals(decision.approvalStatus())) {
-            log.warn("""
-                    Incident decision violated restart approval contract.
-                    Enforcing approval flow in code. status={}, approvalStatus={}, summary={}
-                    """,
-                    decision.status(),
-                    decision.approvalStatus(),
-                    decision.summary());
-            return executeRestartApprovalFlow(event);
+        if (event.eventType() != null && event.eventType().name().equals("INCIDENT_DETECTED") && decision != null) {
+            if ("RESTART_SERVICE".equals(decision.recommendedAction())
+                    && !"PENDING".equals(decision.approvalStatus())) {
+                log.warn("""
+                        Incident decision violated restart approval contract.
+                        Enforcing approval flow in code. status={}, approvalStatus={}, summary={}
+                        """,
+                        decision.status(),
+                        decision.approvalStatus(),
+                        decision.summary());
+                return executeRestartApprovalFlow(event);
+            }
+
+            if ("ANALYZE_CODE".equals(decision.recommendedAction())) {
+                return executeCodeIssueApprovalFlow(event, decision);
+            }
         }
 
         return decision;
@@ -299,6 +325,167 @@ private static final String INCIDENT_SYSTEM_PROMPT = """
                     "Failed to create restart approval request",
                     "RESTART_SERVICE",
                     true,
+                    "ERROR",
+                    "NOT_EXECUTED"
+            );
+        }
+    }
+
+    private AgentDecision executeCodeIssueApprovalFlow(AgentEvent event, AgentDecision currentDecision) {
+        try {
+            DiagnosticResult diagnostic = incidentTools.runDiagnostic(event.eventDate(), event.errorMessage());
+            if (!"ANALYZE_CODE".equals(diagnostic.recommendedAction())) {
+                return currentDecision;
+            }
+
+            RepositoryContext context = incidentTools.getRepositoryContext(diagnostic.targetSystem());
+            CodeContextResult codeContext = incidentTools.fetchCodeContext(
+                    context.repoName(),
+                    context.baseBranch(),
+                    context.localPath(),
+                    event.errorMessage()
+            );
+            CodeAnalysisResult analysis = incidentTools.analyzeCodeIssue(
+                    event.errorMessage(),
+                    diagnostic.targetSystem(),
+                    context.repoName(),
+                    codeContext.codeContext()
+            );
+
+            boolean readyForPullRequest = analysis.confidentFixAvailable()
+                    && analysis.targetFile() != null
+                    && !analysis.targetFile().isBlank()
+                    && analysis.replacementContent() != null
+                    && !analysis.replacementContent().isBlank();
+
+            if (!readyForPullRequest) {
+                return new AgentDecision(
+                        event.eventType().name(),
+                        "completed",
+                        analysis.summary(),
+                        "ANALYZE_CODE",
+                        false,
+                        "NOT_REQUIRED",
+                        "NOT_EXECUTED"
+                );
+            }
+
+            if ("PENDING".equals(currentDecision.approvalStatus())) {
+                return currentDecision;
+            }
+
+            OnCallUser onCallUser = incidentTools.getCurrentOncall();
+            PullRequestApprovalRequest request = new PullRequestApprovalRequest(
+                    onCallUser.slackUserId(),
+                    event.eventDate(),
+                    event.errorMessage(),
+                    analysis.summary(),
+                    "CREATE_PULL_REQUEST",
+                    diagnostic.targetSystem(),
+                    analysis.repoName() == null || analysis.repoName().isBlank() ? context.repoName() : analysis.repoName(),
+                    analysis.targetFile(),
+                    analysis.replacementContent()
+            );
+
+            Map<String, Object> approvalResult = incidentTools.requestPullRequestApproval(request);
+            String approvalStatus = String.valueOf(approvalResult.getOrDefault("approvalStatus", "UNKNOWN"));
+            String message = String.valueOf(approvalResult.getOrDefault(
+                    "message",
+                    "Pull request approval request created."
+            ));
+
+            return new AgentDecision(
+                    event.eventType().name(),
+                    "pending",
+                    message,
+                    "ANALYZE_CODE",
+                    true,
+                    approvalStatus,
+                    "NOT_EXECUTED"
+            );
+        } catch (Exception ex) {
+            log.error("Failed to enforce code issue approval flow in code.", ex);
+            return new AgentDecision(
+                    event.eventType().name(),
+                    "error",
+                    "Failed to create pull request approval request",
+                    "ANALYZE_CODE",
+                    true,
+                    "ERROR",
+                    "NOT_EXECUTED"
+            );
+        }
+    }
+
+    private AgentDecision executeApprovedPullRequestFlow(AgentEvent event) {
+        try {
+            ApprovalValidationResult validation = approvalService.validateApprovalResponse(
+                    event.approvalId(),
+                    event.slackUserId(),
+                    event.response()
+            );
+
+            if (!validation.authorized() || !validation.approved()) {
+                return new AgentDecision(
+                        event.eventType().name(),
+                        "completed",
+                        validation.reason(),
+                        "CREATE_PULL_REQUEST",
+                        false,
+                        validation.approvalStatus(),
+                        "NOT_EXECUTED"
+                );
+            }
+
+            PullRequestPlan plan = approvalService.getPullRequestPlan(event.approvalId());
+            RepositoryContext context = repositoryContextService.resolveContext(plan.targetSystem());
+            String repoName = plan.repoName() == null || plan.repoName().isBlank() ? context.repoName() : plan.repoName();
+            String featureBranch = "auto-fix/" + plan.incidentId();
+            String title = "Fix " + plan.targetSystem() + " incident " + plan.incidentId();
+            String body = """
+                    Automated fix generated by the on-call agent.
+
+                    Summary:
+                    %s
+
+                    Target file:
+                    %s
+
+                    Approval ID:
+                    %s
+                    """.formatted(plan.diagnosticSummary(), plan.targetFile(), plan.approvalId());
+
+            PullRequestResult result = gitHubService.createPullRequest(
+                    repoName,
+                    context.baseBranch(),
+                    featureBranch,
+                    title,
+                    body,
+                    plan.targetFile(),
+                    plan.replacementContent()
+            );
+
+            if (result.success()) {
+                approvalService.markUsed(event.approvalId());
+            }
+
+            return new AgentDecision(
+                    event.eventType().name(),
+                    result.success() ? "completed" : "error",
+                    result.message(),
+                    "CREATE_PULL_REQUEST",
+                    false,
+                    validation.approvalStatus(),
+                    result.success() ? "PULL_REQUEST_CREATED" : "NOT_EXECUTED"
+            );
+        } catch (Exception ex) {
+            log.error("Failed to execute approved pull request flow.", ex);
+            return new AgentDecision(
+                    event.eventType().name(),
+                    "error",
+                    "Failed to create pull request after approval",
+                    "CREATE_PULL_REQUEST",
+                    false,
                     "ERROR",
                     "NOT_EXECUTED"
             );

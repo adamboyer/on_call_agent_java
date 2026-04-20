@@ -33,7 +33,9 @@ public class CodeAnalysisService {
                             Rules:
                             - If you are confident, set confidentFixAvailable=true.
                             - If not confident, set confidentFixAvailable=false.
-                            - Do not invent files you cannot infer.
+                            - Do not invent files you cannot infer from the provided code context.
+                            - If you are confident, provide the exact corrected file contents in replacementContent.
+                            - If you are not confident, replacementContent must be an empty string.
                             - Return JSON only.
                             """)
                     .user("""
@@ -55,6 +57,7 @@ public class CodeAnalysisService {
                               "summary": "string",
                               "proposedChange": "string",
                               "targetFile": "string",
+                              "replacementContent": "string",
                               "confidence": "low | medium | high",
                               "repoName": "string"
                             }
@@ -72,6 +75,7 @@ public class CodeAnalysisService {
             return new CodeAnalysisResult(
                     false,
                     "Unable to confidently determine an automated code fix.",
+                    "",
                     "",
                     "",
                     "low",

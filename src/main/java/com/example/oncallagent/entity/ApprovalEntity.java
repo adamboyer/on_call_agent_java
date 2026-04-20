@@ -6,6 +6,7 @@ import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
 import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
+import jakarta.persistence.Lob;
 import jakarta.persistence.Table;
 
 import java.time.Instant;
@@ -28,6 +29,18 @@ public class ApprovalEntity {
 
     @Column(nullable = false)
     private String targetSystem;
+
+    private String repoName;
+
+    private String targetFile;
+
+    @Lob
+    @Column(length = 200000)
+    private String replacementContent;
+
+    @Lob
+    @Column(length = 20000)
+    private String diagnosticSummary;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)
@@ -77,6 +90,38 @@ public class ApprovalEntity {
 
     public void setTargetSystem(String targetSystem) {
         this.targetSystem = targetSystem;
+    }
+
+    public String getRepoName() {
+        return repoName;
+    }
+
+    public void setRepoName(String repoName) {
+        this.repoName = repoName;
+    }
+
+    public String getTargetFile() {
+        return targetFile;
+    }
+
+    public void setTargetFile(String targetFile) {
+        this.targetFile = targetFile;
+    }
+
+    public String getReplacementContent() {
+        return replacementContent;
+    }
+
+    public void setReplacementContent(String replacementContent) {
+        this.replacementContent = replacementContent;
+    }
+
+    public String getDiagnosticSummary() {
+        return diagnosticSummary;
+    }
+
+    public void setDiagnosticSummary(String diagnosticSummary) {
+        this.diagnosticSummary = diagnosticSummary;
     }
 
     public ApprovalStatus getStatus() {

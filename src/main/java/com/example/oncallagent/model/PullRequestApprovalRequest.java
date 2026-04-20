@@ -7,6 +7,8 @@ public record PullRequestApprovalRequest(
         String diagnosticSummary,
         String recommendedAction,
         String targetSystem,
-        String repoName
+        String repoName,
+        String targetFile,
+        String replacementContent
 ) {
 }

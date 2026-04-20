@@ -43,4 +43,25 @@ public class LoggingSlackService implements SlackService {
                 recommendedAction);
         return true;
     }
+
+    @Override
+    public boolean sendPullRequestApprovalRequest(String slackUserId,
+                                                  String approvalId,
+                                                  String eventDate,
+                                                  String errorMessage,
+                                                  String diagnosticSummary,
+                                                  String recommendedAction,
+                                                  String targetSystem,
+                                                  String repoName,
+                                                  String targetFile) {
+        log.warn("""
+                LOCAL Slack stub sendPullRequestApprovalRequest.
+                slackUserId={}, approvalId={}, repoName={}, targetFile={}
+                """,
+                slackUserId,
+                approvalId,
+                repoName,
+                targetFile);
+        return true;
+    }
 }

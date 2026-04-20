@@ -1,12 +1,8 @@
 package com.example.oncallagent.model;
 
-public record ApprovalValidationResult(
-        boolean approved,
-        boolean authorized,
-        String approvalStatus,
-        String reason,
+public record PullRequestPlan(
+        String approvalId,
         String incidentId,
-        String action,
         String targetSystem,
         String repoName,
         String targetFile,

@@ -64,7 +64,12 @@ public class SlackInteractionController {
 
             String action = parts[0];
             String approvalId = parts[1];
-            String response = "DENY_RESTART".equals(action) ? "DENY_RESTART" : "APPROVE_RESTART";
+            String response = switch (action) {
+                case "DENY_RESTART" -> "DENY_RESTART";
+                case "APPROVE_PR" -> "APPROVE_PR";
+                case "DENY_PR" -> "DENY_PR";
+                default -> "APPROVE_RESTART";
+            };
 
             AgentDecision decision = agentDriverService.handle(
                     AgentEvent.approvalResponse(approvalId, slackUserId, response)

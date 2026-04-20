@@ -221,7 +221,9 @@ public class AgentTools {
                                                           String diagnosticSummary,
                                                           String recommendedAction,
                                                           String targetSystem,
-                                                          String repoName) {
+                                                          String repoName,
+                                                          String targetFile,
+                                                          String replacementContent) {
         log.info("Tool called: requestPullRequestApproval. slackId={}, recommendedAction={}, targetSystem={}, repoName={}",
                 slackId, recommendedAction, targetSystem, repoName);
 
@@ -233,7 +235,9 @@ public class AgentTools {
                     diagnosticSummary,
                     recommendedAction,
                     targetSystem,
-                    repoName
+                    repoName,
+                    targetFile,
+                    replacementContent
             );
 
             log.info("Tool completed: requestPullRequestApproval. approvalId={}, approvalStatus={}",

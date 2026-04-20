@@ -5,6 +5,7 @@ public record CodeAnalysisResult(
         String summary,
         String proposedChange,
         String targetFile,
+        String replacementContent,
         String confidence,
         String repoName
 ) {

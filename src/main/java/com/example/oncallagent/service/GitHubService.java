@@ -9,4 +9,14 @@ public interface GitHubService {
                                         String featureBranch,
                                         String title,
                                         String body);
+
+    default PullRequestResult createPullRequest(String repoName,
+                                                String baseBranch,
+                                                String featureBranch,
+                                                String title,
+                                                String body,
+                                                String targetFile,
+                                                String replacementContent) {
+        return createPullRequest(repoName, baseBranch, featureBranch, title, body);
+    }
 }

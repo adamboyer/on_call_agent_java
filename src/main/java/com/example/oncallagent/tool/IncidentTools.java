@@ -294,7 +294,9 @@ public Map<String, Object> requestPullRequestApproval(PullRequestApprovalRequest
                 request.diagnosticSummary(),
                 request.recommendedAction(),
                 request.targetSystem(),
-                request.repoName()
+                request.repoName(),
+                request.targetFile(),
+                request.replacementContent()
         );
 
         log.info("Tool completed: requestPullRequestApproval. approvalId={}, approvalStatus={}",
@@ -321,7 +323,9 @@ private void validatePullRequestApprovalRequest(PullRequestApprovalRequest reque
             || isBlank(request.diagnosticSummary())
             || isBlank(request.recommendedAction())
             || isBlank(request.targetSystem())
-            || isBlank(request.repoName())) {
+            || isBlank(request.repoName())
+            || isBlank(request.targetFile())
+            || isBlank(request.replacementContent())) {
         throw new IllegalArgumentException("""
                 Invalid pull request approval request.
                 Required fields:
@@ -332,6 +336,8 @@ private void validatePullRequestApprovalRequest(PullRequestApprovalRequest reque
                 - recommendedAction
                 - targetSystem
                 - repoName
+                - targetFile
+                - replacementContent
                 """);
     }
 
