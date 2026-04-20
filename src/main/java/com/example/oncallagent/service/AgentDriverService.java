@@ -2,12 +2,17 @@ package com.example.oncallagent.service;
 
 import com.example.oncallagent.model.AgentDecision;
 import com.example.oncallagent.model.AgentEvent;
+import com.example.oncallagent.model.DiagnosticResult;
+import com.example.oncallagent.model.OnCallUser;
+import com.example.oncallagent.model.RestartApprovalRequest;
 import com.example.oncallagent.tool.ApprovalTools;
 import com.example.oncallagent.tool.IncidentTools;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.stereotype.Service;
+
+import java.util.Map;
 
 @Service
 public class AgentDriverService {
@@ -46,6 +51,7 @@ private static final String INCIDENT_SYSTEM_PROMPT = """
         - You are not allowed to return status = pending unless you have already called an approval-request tool successfully.
         - For RESTART_SERVICE, you must request approval before returning.
         - For CREATE_PULL_REQUEST, you must request approval before returning.
+        - For RESTART_SERVICE, you must not return status = error after runDiagnostic and getCurrentOncall succeed. You must call requestRestartApproval.
 
         Incident flow rules:
         1. Call runDiagnostic first.
@@ -196,6 +202,8 @@ private static final String INCIDENT_SYSTEM_PROMPT = """
                     .call()
                     .entity(AgentDecision.class);
 
+            decision = enforceRequiredWorkflow(event, decision);
+
             log.info("LLM returned decision. eventType={}, status={}, recommendedAction={}, approvalRequired={}, restartStatus={}",
                     event.eventType(),
                     decision.status(),
@@ -216,6 +224,82 @@ private static final String INCIDENT_SYSTEM_PROMPT = """
                     "INVESTIGATE",
                     false,
                     "UNKNOWN",
+                    "NOT_EXECUTED"
+            );
+        }
+    }
+
+    private AgentDecision enforceRequiredWorkflow(AgentEvent event, AgentDecision decision) {
+        if (event.eventType() != null
+                && event.eventType().name().equals("INCIDENT_DETECTED")
+                && decision != null
+                && "RESTART_SERVICE".equals(decision.recommendedAction())
+                && !"PENDING".equals(decision.approvalStatus())) {
+            log.warn("""
+                    Incident decision violated restart approval contract.
+                    Enforcing approval flow in code. status={}, approvalStatus={}, summary={}
+                    """,
+                    decision.status(),
+                    decision.approvalStatus(),
+                    decision.summary());
+            return executeRestartApprovalFlow(event);
+        }
+
+        return decision;
+    }
+
+    private AgentDecision executeRestartApprovalFlow(AgentEvent event) {
+        try {
+            DiagnosticResult diagnostic = incidentTools.runDiagnostic(event.eventDate(), event.errorMessage());
+            if (!"RESTART_SERVICE".equals(diagnostic.recommendedAction())) {
+                log.warn("Restart approval fallback skipped because diagnostic action resolved to {}",
+                        diagnostic.recommendedAction());
+                return new AgentDecision(
+                        event.eventType().name(),
+                        "error",
+                        "Restart approval flow was requested, but the diagnostic no longer recommends restart.",
+                        diagnostic.recommendedAction(),
+                        diagnostic.approvalRequired(),
+                        "ERROR",
+                        "NOT_EXECUTED"
+                );
+            }
+
+            OnCallUser onCallUser = incidentTools.getCurrentOncall();
+            RestartApprovalRequest request = new RestartApprovalRequest(
+                    onCallUser.slackUserId(),
+                    event.eventDate(),
+                    event.errorMessage(),
+                    diagnostic.summary(),
+                    diagnostic.recommendedAction(),
+                    diagnostic.targetSystem()
+            );
+
+            Map<String, Object> approvalResult = incidentTools.requestRestartApproval(request);
+            String approvalStatus = String.valueOf(approvalResult.getOrDefault("approvalStatus", "UNKNOWN"));
+            String message = String.valueOf(approvalResult.getOrDefault(
+                    "message",
+                    "Slack approval request created."
+            ));
+
+            return new AgentDecision(
+                    event.eventType().name(),
+                    "pending",
+                    message,
+                    diagnostic.recommendedAction(),
+                    true,
+                    approvalStatus,
+                    "NOT_EXECUTED"
+            );
+        } catch (Exception ex) {
+            log.error("Failed to enforce restart approval flow in code.", ex);
+            return new AgentDecision(
+                    event.eventType().name(),
+                    "error",
+                    "Failed to create restart approval request",
+                    "RESTART_SERVICE",
+                    true,
+                    "ERROR",
                     "NOT_EXECUTED"
             );
         }

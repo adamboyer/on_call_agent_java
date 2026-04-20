@@ -21,7 +21,6 @@ import java.util.UUID;
 public class ApprovalService {
 
     private static final Logger log = LoggerFactory.getLogger(ApprovalService.class);
-
     private static final String APPROVAL_CHANNEL_ID = "C0ATPJU695G";
 
     private final ApprovalRepository approvalRepository;
@@ -65,40 +64,21 @@ public class ApprovalService {
         log.info("Approval persisted. approvalId={}, incidentId={}, expiresAt={}",
                 entity.getApprovalId(), entity.getIncidentId(), entity.getExpiresAt());
 
-        String slackMessage = """
-                🚨 *Approval Required*
+        log.info("Sending Slack approval request. approvalId={}, slackUserId={}",
+                entity.getApprovalId(), slackId);
 
-                *Incident:* %s
-                *System:* %s
-                *Summary:* %s
-
-                Recommended Action: %s
-
-                To approve, reply with:
-                `APPROVE_RESTART`
-
-                Approval ID: %s
-                Requested for on-call user: %s
-                """.formatted(
-                entity.getIncidentId(),
-                targetSystem,
+        boolean slackSent = slackService.sendApprovalRequest(
+                slackId,
+                entity.getApprovalId(),
+                eventDate,
+                errorMessage,
                 diagnosticSummary,
                 recommendedAction,
-                entity.getApprovalId(),
-                slackId
+                targetSystem
         );
 
-        log.info("Sending Slack approval message. approvalId={}, channelId={}",
-                entity.getApprovalId(), APPROVAL_CHANNEL_ID);
-
-        SlackMessageResult slackResult = slackService.sendChannelMessage(APPROVAL_CHANNEL_ID, slackMessage);
-
-        log.info("Slack approval message result. approvalId={}, slackOk={}, channelId={}, ts={}, error={}",
-                entity.getApprovalId(),
-                slackResult.ok(),
-                slackResult.channelId(),
-                slackResult.messageTs(),
-                slackResult.error());
+        log.info("Slack approval request result. approvalId={}, slackSent={}",
+                entity.getApprovalId(), slackSent);
 
         Map<String, Object> result = new HashMap<>();
         result.put("approvalId", entity.getApprovalId());
@@ -108,35 +88,31 @@ public class ApprovalService {
         result.put("recommendedAction", recommendedAction);
         result.put("incidentId", entity.getIncidentId());
         result.put("targetSystem", targetSystem);
-        result.put("slackChannelId", APPROVAL_CHANNEL_ID);
-        result.put("slackMessageSent", slackResult.ok());
-        result.put("slackMessageTs", slackResult.messageTs());
-        result.put("slackError", slackResult.error());
-        result.put("message", slackResult.ok()
+        result.put("slackMessageSent", slackSent);
+        result.put("message", slackSent
                 ? "Slack approval request created and sent"
                 : "Slack approval request created but Slack send failed");
 
         log.debug("requestRestartApproval result={}", result);
-
         return result;
     }
 
-         @Transactional
-        public Map<String, Object> requestPullRequestApproval(String slackId,
-                                                        String eventDate,
-                                                        String errorMessage,
-                                                        String diagnosticSummary,
-                                                        String recommendedAction,
-                                                        String targetSystem,
-                                                        String repoName) {
+    @Transactional
+    public Map<String, Object> requestPullRequestApproval(String slackId,
+                                                          String eventDate,
+                                                          String errorMessage,
+                                                          String diagnosticSummary,
+                                                          String recommendedAction,
+                                                          String targetSystem,
+                                                          String repoName) {
         log.info("Creating PR approval. slackId={}, recommendedAction={}, targetSystem={}, repoName={}",
                 slackId, recommendedAction, targetSystem, repoName);
 
         if (slackId == null || recommendedAction == null || targetSystem == null
                 || eventDate == null || errorMessage == null || diagnosticSummary == null || repoName == null) {
-                log.error("Missing required parameters for requestPullRequestApproval. slackId={}, repoName={}, targetSystem={}",
-                        slackId, repoName, targetSystem);
-                throw new IllegalArgumentException("Missing required parameters for requestPullRequestApproval");
+            log.error("Missing required parameters for requestPullRequestApproval. slackId={}, repoName={}, targetSystem={}",
+                    slackId, repoName, targetSystem);
+            throw new IllegalArgumentException("Missing required parameters for requestPullRequestApproval");
         }
 
         ApprovalEntity entity = new ApprovalEntity();
@@ -155,17 +131,17 @@ public class ApprovalService {
                 entity.getApprovalId(), entity.getIncidentId(), entity.getExpiresAt());
 
         String slackMessage = """
-                🚨 *Pull Request Approval Required*
+                Pull Request Approval Required
 
-                *Incident:* %s
-                *System:* %s
-                *Repository:* %s
-                *Summary:* %s
+                Incident: %s
+                System: %s
+                Repository: %s
+                Summary: %s
 
                 Recommended Action: %s
 
                 To approve PR creation, reply with:
-                `APPROVE_PR`
+                APPROVE_PR
 
                 Approval ID: %s
                 Requested for on-call user: %s
@@ -209,9 +185,8 @@ public class ApprovalService {
                 : "Slack PR approval request created but Slack send failed");
 
         log.debug("requestPullRequestApproval result={}", result);
-
         return result;
-        }
+    }
 
     @Transactional
     public ApprovalValidationResult validateApprovalResponse(String approvalId,
@@ -283,33 +258,33 @@ public class ApprovalService {
             );
         }
 
-boolean approved;
+        boolean approved;
 
-if (ApprovalAction.RESTART_SERVICE.name().equals(entity.getAction())) {
-    approved = "APPROVE_RESTART".equalsIgnoreCase(response);
-} else if (ApprovalAction.CREATE_PULL_REQUEST.name().equals(entity.getAction())) {
-    approved = "APPROVE_PR".equalsIgnoreCase(response);
-} else {
-    approved = false;
-}
+        if (ApprovalAction.RESTART_SERVICE.name().equals(entity.getAction())) {
+            approved = "APPROVE_RESTART".equalsIgnoreCase(response);
+        } else if (ApprovalAction.CREATE_PULL_REQUEST.name().equals(entity.getAction())) {
+            approved = "APPROVE_PR".equalsIgnoreCase(response);
+        } else {
+            approved = false;
+        }
 
-if (!approved) {
-    entity.setStatus(ApprovalStatus.DENIED);
-    approvalRepository.save(entity);
+        if (!approved) {
+            entity.setStatus(ApprovalStatus.DENIED);
+            approvalRepository.save(entity);
 
-    log.info("Approval denied by user. approvalId={}, slackUserId={}, action={}",
-            approvalId, slackUserId, entity.getAction());
+            log.info("Approval denied by user. approvalId={}, slackUserId={}, action={}",
+                    approvalId, slackUserId, entity.getAction());
 
-    return new ApprovalValidationResult(
-            false,
-            true,
-            entity.getStatus().name(),
-            "approval_denied",
-            entity.getIncidentId(),
-            entity.getAction(),
-            entity.getTargetSystem()
-    );
-}
+            return new ApprovalValidationResult(
+                    false,
+                    true,
+                    entity.getStatus().name(),
+                    "approval_denied",
+                    entity.getIncidentId(),
+                    entity.getAction(),
+                    entity.getTargetSystem()
+            );
+        }
 
         entity.setStatus(ApprovalStatus.APPROVED);
         approvalRepository.save(entity);

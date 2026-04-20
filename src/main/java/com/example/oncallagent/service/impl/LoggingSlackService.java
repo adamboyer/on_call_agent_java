@@ -4,11 +4,11 @@ import com.example.oncallagent.model.SlackMessageResult;
 import com.example.oncallagent.service.SlackService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.context.annotation.Profile;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnMissingBean;
 import org.springframework.stereotype.Service;
 
 @Service
-@Profile({"local", "test"})
+@ConditionalOnMissingBean(SlackService.class)
 public class LoggingSlackService implements SlackService {
 
     private static final Logger log = LoggerFactory.getLogger(LoggingSlackService.class);
@@ -23,5 +23,24 @@ public class LoggingSlackService implements SlackService {
                 String.valueOf(System.currentTimeMillis()),
                 null
         );
+    }
+
+    @Override
+    public boolean sendApprovalRequest(String slackUserId,
+                                       String approvalId,
+                                       String eventDate,
+                                       String errorMessage,
+                                       String diagnosticSummary,
+                                       String recommendedAction,
+                                       String targetSystem) {
+        log.warn("""
+                LOCAL Slack stub sendApprovalRequest.
+                slackUserId={}, approvalId={}, targetSystem={}, recommendedAction={}
+                """,
+                slackUserId,
+                approvalId,
+                targetSystem,
+                recommendedAction);
+        return true;
     }
 }
